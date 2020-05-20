@@ -1,0 +1,1284 @@
+ECC_LoanTrigger
+--------------------------
+trigger ECC_LoanTrigger on LLC_BI__Loan__c(before insert, before update, after update, after insert) {
+    if (checkRecursive.getProfileName() == 'Integration/Data Migration') return;
+    Private static final String PARENTOBJECT = 'LLC_BI__Loan__c';
+    if(trigger.isbefore && trigger.isinsert)
+    {
+        if(checkRecursive.run28)
+        {
+            ECC_LoanTriggerHandler.beforeInsertTriggerHandler(Trigger.new);
+            ECC_loanProcessBuilderHandler elPB = new ECC_loanProcessBuilderHandler(); 
+            elPB.AllNodeMethodBU(Trigger.NewMap, null);
+            checkRecursive.run28 = false;
+        }
+    }
+    if(trigger.isbefore && trigger.isUpdate)
+    {
+        ECC_LoanTriggerHandler.beforeUpdateTriggerHandler(Trigger.new, Trigger.newMap, Trigger.oldMap); //This check require for calling recursively.                       
+        if(checkrecursive.run29)
+        {
+            System.debug('AVR Loan Trigger Execution Starts');
+            // Added below lines of code by CTS Offshore team for REQT-01068   
+            Id LoanRecId = Schema.SObjectType.LLC_BI__Loan__c.getRecordTypeInfosByName().get('Loan UI').getRecordTypeId();
+            System.debug('LoanRecId###' + LoanRecId);
+            for (LLC_BI__Loan__c loan: Trigger.new) {
+                if (loan.RecordTypeId == LoanRecId && 
+                    (Trigger.oldMap.get(loan.Id).LLC_BI__Stage__c == 'Pre Booking/Funding Due Diligence' && 
+                     loan.LLC_BI__Stage__c == 'Booking / Funding') && (loan.MCA_Status__c != 'Pass')) 
+                {
+                    loan.addError('Compliance records MCA check associated with this Loan has not been completed which is Mandatory by stage "Pre Booking/Funding Due Diligence"');
+                }
+                //Code added be Neha  for the REQT-02504--Start
+                if (loan.LLC_BI__Stage__c == 'Booked' && (Trigger.oldMap.get(loan.Id).LLC_BI__Stage__c != loan.LLC_BI__Stage__c)) {
+                    if (loan.LLC_BI__Amount__c != null)
+                        loan.ECC_Original_Note_Amount__c = loan.LLC_BI__Amount__c;
+                }
+                //Code added be Neha  for the REQT-02504--End
+            }
+            CSA_ValidationEngineTriggerHandler.checkRecords(Trigger.new, PARENTOBJECT);
+            System.debug('AVR Loan Trigger Execution Ends');
+            if(checkrecursive.run33)
+            {
+                ECC_loanProcessBuilderHandler elPB = new ECC_loanProcessBuilderHandler(); 
+                ECC_LoanFlowHandler eLF = new ECC_LoanFlowHandler();
+                elPB.Days20Stage3AdverseActionCreate(Trigger.NewMap, Trigger.OldMap);
+                elPB.AllNodeMethodBU(Trigger.NewMap, Trigger.OldMap);        
+                eLF.updateManageSources(Trigger.OldMap,Trigger.NewMap);
+                eLF.ECC_TAT_Tracking_Update_Loan(Trigger.OldMap,Trigger.NewMap);
+                checkrecursive.run33 = false;
+            }
+            checkrecursive.run29 = false;
+        }
+    }
+    if(trigger.isAfter && trigger.isinsert)
+    {
+        if(checkrecursive.run30)
+        {
+            Integer checkCounter1 = 0;
+            ECC_LoanTriggerHandler.afterInsertTriggerHandler(trigger.newMap.KeySet());
+            system.debug('**inside aftertrigger');
+            ECC_LoanTriggerHandler.onInsertCloneOTM(trigger.newMap.keyset());
+            for (LLC_BI__Loan__c loanObj: Trigger.new) {
+                if (loanObj.LLC_BI__ParentLoan__c != null && (loanObj.LLC_BI__Product_Type__c.equals('KEF Loan') || loanObj.LLC_BI__Product_Type__c.equals('KEF Lease'))) {
+                    checkCounter1++;
+                }
+            }
+            if(checkCounter1 == trigger.new.size())
+                ECC_LoanTriggerHandler.afterInsertCloneCOATriggerHandler(trigger.new); //Trigger for clone COA
+            Set < ID > loanId = new Set < ID > ();
+            for (LLC_BI__Loan__c loanObj: Trigger.newMap.values()) {
+                if (loanObj.LLC_BI__ParentLoan__c != null && (loanObj.LLC_BI__Product_Type__c == 'KEF Lease' || loanObj.LLC_BI__Product_Type__c == 'KEF Loan'))
+                    loanID.add(loanObj.ID);
+            }        
+            if (loanID.size() > 0 && loanID != null)
+                ID jobID = System.enqueueJob(new callCreateOpptyKEF(loanID));
+            ECC_loanProcessBuilderHandler elPB = new ECC_loanProcessBuilderHandler(); 
+            ECC_LoanFlowHandler eLF = new ECC_LoanFlowHandler();
+            elPB.FeeWaiverApproved(Trigger.NewMap);
+            elPB.Days20Stage3AdverseActionCreate(Trigger.NewMap, null);
+            elPB.AllNodeMethodAU(Trigger.NewMap, null);
+            elPB.AllRelatedSObjectInsertNodeMethod(Trigger.NewMap, null);
+            eLF.updateManageSources(null,Trigger.NewMap);
+            eLF.ECC_TAT_Tracking_Update_Loan(null,Trigger.NewMap);
+            checkrecursive.run30 = false;
+        }
+    }
+    if(trigger.isAfter && trigger.isUpdate)
+    {
+        Set < Id > loanIdSet = new Set < Id > ();
+        //Start-----Added on 06/12/18 by Neha to make HMDA Di Required true when HMDA Reportable field value changes
+        for (LLC_BI__Loan__c loanObj: Trigger.New) {
+            if (loanObj.LLC_BI__HMDA_Reportable__c != Trigger.OldMap.get(loanObj.Id).LLC_BI__HMDA_Reportable__c) {
+                loanIdSet.add(loanObj.id);
+            }
+        }
+        Boolean result = loanIdSet.isEmpty();
+        System.debug('result  ' + result);
+        If(result == false) {
+            if (ECC_CheckRecursive.HMDAVar == false) {
+                ECC_LoanTriggerHandler.updateloanHMDADiRequired(loanIdSet);
+                ECC_CheckRecursive.HMDAVar = true;
+            }
+        }
+        //End-----Added on 06/12/18 by Neha to make HMDA Di Required true when HMDA Reportable field value changes
+        if (checkrecursive.run31) {
+            ECC_LoanTriggerHandler.afterUpdateTriggerHandler(Trigger.oldMap, Trigger.newMap);
+            checkrecursive.run31 = false;
+        }
+        Integer checkCounter = 0;
+        for (LLC_BI__Loan__c loanObj: Trigger.new) {
+            if ((loanObj.LLC_BI__ParentLoan__c != null) && (loanObj.LLC_BI__Stage__c.equals('Pre-Closing Due Diligence') ||
+                                                            loanObj.LLC_BI__Stage__c.equals('Doc Prep and Doc Review') || loanObj.LLC_BI__Stage__c.equals('Pending Execution') ||
+                                                            loanObj.LLC_BI__Stage__c.equals('Pre Booking/Funding Due Diligence') //Added for REQT-02655
+                                                            ||
+                                                            loanObj.LLC_BI__Stage__c.equals('Booking / Funding') || loanObj.LLC_BI__Stage__c.equals('Booked')) && (loanObj.LLC_BI__Product_Type__c.equals('KEF Loan') || loanObj.LLC_BI__Product_Type__c.equals('KEF Lease'))) {
+                                                                checkCounter ++;
+                                                            }
+        }
+        if(checkCounter == trigger.new.size() && checkrecursive.run32)
+        {
+            ECC_LoanTriggerHandler.afterUpdateCOAValidationTriggerHandler(Trigger.oldMap, Trigger.newMap);
+            checkrecursive.run32 = false;
+        }
+        //@added 03-04-2018 to check recursive                  
+        if (ECC_CheckRecursive.Eccloanemailrunonce == false) {
+            ECCP_LoanApprovedTriggerHandler.TriggerEmailAlert(Trigger.new, Trigger.OldMap);
+            ECC_CheckRecursive.Eccloanemailrunonce = true;
+        }
+        if (ECC_CheckRecursive.EccCOATaskrunonce == false) {
+            ECCP_LoanApprovedTriggerHandler.TriggerAlertForCA(Trigger.new, Trigger.OldMap, Trigger.newMap);
+            ECC_CheckRecursive.EccCOATaskrunonce = true;
+        }
+        List < LLC_BI__Loan__c > loanUpdateList = new List < LLC_BI__Loan__c > ();
+        for (LLC_BI__Loan__c loanRec: trigger.new) {
+            loanUpdateList.add(loanRec);
+        }
+        if(checkRecursive.run34){
+            ECC_loanProcessBuilderHandler elPB = new ECC_loanProcessBuilderHandler();
+            elPB.AllNodeMethodAU(Trigger.NewMap, Trigger.OldMap);
+            elPB.FeeWaiverApproved(Trigger.NewMap);
+            elPB.AllRelatedSObjectInsertNodeMethod(Trigger.NewMap, Trigger.OldMap);
+            checkRecursive.run34 = false; 
+        }  
+    }    
+}
+
+
+
+ ECC_LoanFlowHandler
+-------------------------
+/*******************************************************************************************************************************************
+* @classname    :   ECC_LoanFlowHandler 
+* @description  :   Handler Class created to replace Visual Flows on Loan
+* @author       :   Shruti Saxena
+* @createddate  :   01/03/2019
+*******************************************************************************************************************************************/
+public with sharing class ECC_LoanFlowHandler {
+    ECC_Int_Profile_Permissions__c internalPermissionsList = ECC_Int_Profile_Permissions__c.getInstance();
+    
+    // Logic to replace flow - 'Manage Sources for Sources & Uses'  Process Builder Node name 'Division & Sources/Uses' version 285
+    public void updateManageSources (Map<Id, LLC_BI__Loan__c> oldMap, Map<Id,LLC_BI__Loan__c> newMap)
+    {
+        Set<Id> ppIdSet = new Set<Id>();
+        Set<Id> newPPIdSet = new Set<Id>();
+        Set<Id> sourcesIdSet = new Set<Id>();
+        Set<Id> loanIdSet = new Set<Id>();
+        Map<id,id> loanSourceUsesId = new Map<id,id>();
+        Map<Id,Sources_Uses__c> ppSourceMap = new Map<Id,Sources_Uses__c>();
+        List<Sources_Uses__c> createSourcesUsesList = new List<Sources_Uses__c>();
+        List<Source__c> updateSourceList = new List<Source__c>();
+        List<Source__c> createSourceList = new List<Source__c>();
+        
+        for(LLC_BI__Loan__c loan : newMap.values())
+        {
+            if(!(internalPermissionsList.Integration_Override__c || internalPermissionsList.Exemption_Flag__c) && 
+               (oldMap == null || (oldMap != null && oldMap.get(loan.Id).LLC_BI__Amount__c != newMap.get(loan.Id).LLC_BI__Amount__c)) &&
+               loan.LLC_BI__Product_Line__c != 'CMT' && loan.LLC_BI__Product_Package__c != null)
+            {
+                ppIdSet.add(loan.LLC_BI__Product_Package__c);
+            } 
+        }
+        
+        if(ppIdSet != null && ppIdSet.size()>0)
+        {
+            for(Sources_Uses__c source : [Select id,Product_Package__c from Sources_Uses__c where Product_Package__c in :ppIdSet])
+            {
+                ppSourceMap.put(source.Product_Package__c, source);
+            }
+            
+            for(Id loan : newMap.keyset())
+            {
+                Id productPackage = newMap.get(loan).LLC_BI__Product_Package__c;
+                if(!ppSourceMap.containsKey(productPackage))
+                {
+                    Sources_Uses__c sourcesUses = new Sources_Uses__c();
+                    sourcesUses.Product_Package__c =productPackage;
+                    newPPIdSet.add(productPackage);
+                    createSourcesUsesList.add(sourcesUses);
+                }
+                else if(ppSourceMap.containsKey(productPackage))
+                {
+                    sourcesIdSet.add(ppSourceMap.get(productPackage).id);
+                    loanIdSet.add(loan);
+                }
+            }
+        }
+        
+        if(!createSourcesUsesList.isEmpty())
+        {
+            insert createSourcesUsesList;
+        }
+        
+        if(newPPIdSet != null && newPPIdSet.size()>0)
+        { 
+            for(Sources_Uses__c sourcesUses : [Select id,Product_Package__c from Sources_Uses__c where Product_Package__c in :newPPIdSet])
+            {
+                sourcesIdSet.add(sourcesUses.id);
+                ppSourceMap.put(sourcesUses.Product_Package__c, sourcesUses);
+            }
+            for(Id loan : newMap.keyset())
+            {
+                if(ppSourceMap.containsKey(newMap.get(loan).LLC_BI__Product_Package__c))
+                loanIdSet.add(loan);
+            }
+        }
+        
+        if(sourcesIdSet != null && sourcesIdSet.size() > 0 && loanIdSet != null && loanIdSet.size() > 0)
+        {
+            Map<Id,Source__c> loanSourceRecMap = new Map<Id,Source__c>();
+            for(Source__c source : [Select id,Loan__c,Sources_Uses__c,Amount__c from Source__c where Loan__c in :loanIdSet and Sources_Uses__c in :sourcesIdSet])
+            {
+                loanSourceRecMap.put(source.Loan__c, source);
+                loanSourceUsesId.put(source.Loan__c, source.Sources_Uses__c);
+            }
+            for(Id loan : newMap.keyset())
+            {
+                if(loanSourceRecMap.containsKey(loan))
+                {
+                    Source__c source = loanSourceRecMap.get(loan);
+                    source.Amount__c =newMap.get(loan).LLC_BI__Amount__c;
+                    updateSourceList.add(source);
+                }
+                else
+                {
+                    Source__c source = new Source__c();
+                    source.Amount__c = newMap.get(loan).LLC_BI__Amount__c;
+                    source.Loan__c = loan;
+                    source.Name = newMap.get(loan).Name;
+                    source.Sources_Uses__c = ppSourceMap.get(newMap.get(loan).LLC_BI__Product_Package__c).id;
+                    createSourceList.add(source);
+                }
+            }
+        }
+        if(!updateSourceList.isEmpty())
+        {
+            update updateSourceList;
+        }
+        if(!createSourceList.isEmpty())
+        {
+            insert createSourceList;
+        }
+    }
+    
+    // Logic to replace flow - 'ECC TAT Tracking Update' Process Builder Node name 'TAT Parameter Update' Version 285   
+    public void ECC_TAT_Tracking_Update_Loan(Map<id,LLC_BI__Loan__c> oldMap,Map<id,LLC_BI__Loan__c> newMap)
+    {
+        if(!(internalPermissionsList.Integration_Override__c || internalPermissionsList.Exemption_Flag__c))
+        {
+           Set<Id> allLoanIDSet = new Set<Id>();
+        List<LLC_BI__Loan__c> loanList = new List<LLC_BI__Loan__c>();
+        Map<Id,LLC_BI__Loan__c> loanMap = new Map<Id,LLC_BI__Loan__c>();
+        
+        allLoanIDSet.addAll(newMap.keySet());
+        System.debug('oldMap++++++' + oldMap);
+        System.debug('allLoanIDSet++++++' + allLoanIDSet);
+        System.debug('allLoanIDSetvalues++++++' + newMap.values());        
+        List<ECC_TAT_Tracking__c>  collection_TAT_Tracking = [Select Id, ECC_TaT_LoanRequestType__c, ECC_TaT_LoanStage__c, ECC_TaT_LoanStatus__c, ECC_TaT_RM__c, ECC_TaT_UW__c, ECC_TaT_UW2__c, ECC_TaT_UTL__c, ECC_TaT_BSOorRO__c, ECC_TaT_SBA_BSO__c, ECC_TaT_NewMoney__c, ECC_TaT_Loan__c, ECC_TaT_PP__c  from ECC_TAT_Tracking__c where ECC_TaT_Loan__c in: allLoanIDSet and ECC_TaT_PrimaryObject__c = 'Loan' and ECC_TaT_Status__c = 'Open' ];
+        System.debug('collection_TAT_Tracking+++++' + collection_TAT_Tracking);
+        
+        if(collection_TAT_Tracking!=null && collection_TAT_Tracking.size()>0)
+        {
+            for(ECC_TAT_Tracking__c sobject_TAT_Tracking : collection_TAT_Tracking)
+            {
+                LLC_BI__Loan__c sObject_SelectedLoan = newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c);
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).Request_Type__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).Request_Type__c)
+                    sobject_TAT_Tracking.ECC_TaT_LoanRequestType__c = sObject_SelectedLoan.Request_Type__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Stage__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Stage__c)
+                    sobject_TAT_Tracking.ECC_TaT_LoanStage__c = sObject_SelectedLoan.LLC_BI__Stage__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Status__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Status__c)
+                    sobject_TAT_Tracking.ECC_TaT_LoanStatus__c = sObject_SelectedLoan.LLC_BI__Status__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Loan_Officer__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Loan_Officer__c)
+                    sobject_TAT_Tracking.ECC_TaT_RM__c = sObject_SelectedLoan.LLC_BI__Loan_Officer__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).UW1_assigned_from_PP__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).UW1_assigned_from_PP__c)
+                    sobject_TAT_Tracking.ECC_TaT_UW__c = sObject_SelectedLoan.UW1_assigned_from_PP__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_Underwriter2__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_Underwriter2__c)
+                    sobject_TAT_Tracking.ECC_TaT_UW2__c = sObject_SelectedLoan.ECC_Underwriter2__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_Underwriter_Team_Lead__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_Underwriter_Team_Lead__c)
+                    sobject_TAT_Tracking.ECC_TaT_UTL__c = sObject_SelectedLoan.ECC_Underwriter_Team_Lead__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_BB_BSO__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_BB_BSO__c)
+                    sobject_TAT_Tracking.ECC_TaT_BSOorRO__c = sObject_SelectedLoan.ECC_BB_BSO__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_SBA_BSO__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).ECC_SBA_BSO__c)
+                    sobject_TAT_Tracking.ECC_TaT_SBA_BSO__c = sObject_SelectedLoan.ECC_SBA_BSO__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).Doc_Prep_Specialist__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).Doc_Prep_Specialist__c)
+                    sobject_TAT_Tracking.ECC_TaT_DocPrepSpecialist__c = sObject_SelectedLoan.Doc_Prep_Specialist__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Amount_New_Money__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Amount_New_Money__c)
+                    sobject_TAT_Tracking.ECC_TaT_NewMoney__c = sObject_SelectedLoan.LLC_BI__Amount_New_Money__c;
+                if(oldMap != null && oldMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Product_Package__c != 
+                   newMap.get(sobject_TAT_Tracking.ECC_TaT_Loan__c).LLC_BI__Product_Package__c)
+                    sobject_TAT_Tracking.ECC_TaT_PP__c = sObject_SelectedLoan.LLC_BI__Product_Package__c;
+            }
+            update collection_TAT_Tracking;
+        }    
+        }
+    }
+    
+}
+
+
+ ECC_loanProcessBuilderHandler
+-------------------------------------------
+/*******************************************************************************************************************************************
+* @classname    :   ECC_loanProcessBuilderHandler 
+* @description  :   Handler Class created to replace Process Builder(ECC_loan Version-285) Nodes on Loan 
+* @author       :   Bhanu Kumar (CTS Developer)
+* @createddate  :   01/03/2019
+*******************************************************************************************************************************************/
+public class ECC_loanProcessBuilderHandler {
+    
+    public void FeeWaiverApproved(Map<id, LLC_BI__Loan__c> LoanMap)
+    {
+        List<LLC_BI__Fee__c> feeList = new  List<LLC_BI__Fee__c>();
+        List<Profile> PROFILE = [SELECT Id, Name FROM Profile WHERE Id=:userinfo.getProfileId() LIMIT 1];
+        String ProflieName = PROFILE[0].Name;
+        if(LoanMap != null)
+        {
+            feeList = [select id, ECC_Waive__c, ECC_Waiver_Approved__c, LLC_BI__Loan__c from LLC_BI__Fee__c where LLC_BI__Loan__c in :LoanMap.keySet()]; 
+        }
+        List<LLC_BI__Fee__c> feeListUpd = new List<LLC_BI__Fee__c>();
+        for(LLC_BI__Fee__c f: feeList)
+        {
+            LLC_BI__Loan__c l = LoanMap.get(f.LLC_BI__Loan__c);
+            if(ProflieName != 'Integration/Data Migration' &&  l.ECC_Fee_Waiver_Status__c == 'Approved' && l.LLC_BI__Product_Line__c != 'CMT' && l.LLC_BI__Product_Package__c != null)
+            {  
+                if(f.LLC_BI__Loan__c == l.id && f.ECC_Waive__c == true)
+                {
+                    f.ECC_Waiver_Approved__c = true;
+                }
+                feeListUpd.add(f);
+            }
+        }
+        if(feeListUpd != null){
+           update feeListUpd; 
+        }
+    }
+    public void Days20Stage3AdverseActionCreate(Map<id, LLC_BI__Loan__c> NewLoanMap, Map<id, LLC_BI__Loan__c> OldLoanMap)
+    {
+        List<LLC_BI__Adverse_Action__c> AAList = new List<LLC_BI__Adverse_Action__c>();
+        if(NewLoanMap != null)
+        {
+            for(LLC_BI__Loan__c l: NewLoanMap.values())
+            {
+                if(OldLoanMap!= null && l.ECC_Application_Processing_Stage_Counter__c == '0' && l.LLC_BI__Product_Line__c == 'CMT' && l.LLC_BI__Product_Package__c != null
+                   && l.ECC_Application_Processing_Stage_Counter__c != OldLoanMap.get(l.id).ECC_Application_Processing_Stage_Counter__c && l.LLC_BI__Stage__c == 'Application Processing' && l.Line_of_Business1__c == 'Small Business')
+                {
+                    LLC_BI__Adverse_Action__c Aa = new LLC_BI__Adverse_Action__c();
+                    Aa.LLC_BI__Loan__c = l.id;
+                    Aa.AA_Status__c = 'Loan Declined';
+                    Aa.LLC_BI__Decline_Reason_1__c = 'Loan application incomplete';
+                    Aa.LLC_BI__Loan_Flag__c = 1;
+                    AAList.add(Aa);
+                    l.LLC_BI__Stage__c ='Complete';
+                    l.LLC_BI__Status__c = 'Declined';
+                }
+            }
+            if(AAList != null){
+               insert AAList; 
+            }
+        }
+    }
+    public void AllNodeMethodBU(Map<id, LLC_BI__Loan__c> NewLoanMap, Map<id, LLC_BI__Loan__c> OldLoanMap) 
+    {
+        if(NewLoanMap != null)
+        {
+            List<Profile> PROFILE = [SELECT Id, Name FROM Profile WHERE Id=:userinfo.getProfileId() LIMIT 1];
+            String ProflieName = PROFILE[0].Name;
+            Set<Id> branchIds = new set<Id>();
+            Set<Id> PPIds = new set<Id>();
+            Set<Id> KEFAgreementIds = new Set<Id>();
+            String NameToAssign =null;
+            string recordTypeName = null;
+            
+            for(LLC_BI__Loan__c l:NewLoanMap.values())
+            {
+                branchIds.add(l.Cost_Center__c);
+                PPIds.add(l.LLC_BI__Product_Package__c);
+                KEFAgreementIds.add(l.KEF_Agreement__c);
+            }
+            List<LLC_BI__Branch__c> branchList = [select id, Name, ECC_Bank_Number__c, ECC_Small_Business_Area__c from LLC_BI__Branch__c where id in :branchIds];
+            Map<Id, LLC_BI__Branch__c> branchMap = New Map<Id, LLC_BI__Branch__c>(branchList);
+            List<LLC_BI__Product_Package__c> PPList = [select id, Underwriter_Team_Lead__c,Underwriter_1_Assigned__c,LLC_BI__Stage__c,LLC_BI__Status__c, Loan_Has_Complete_Financial_Package__c,ECC_Complete_Financial_Package_Date__c, Total_exp__c,Bank_Division__c, Private__c from LLC_BI__Product_Package__c where id in :PPIds];
+            Map<Id, LLC_BI__Product_Package__c> PPMap = new Map<Id, LLC_BI__Product_Package__c>(PPList);
+            
+            
+            List<Opportunity> OppoList = [select id, IsPrivate, Vendor_Agreement__c from Opportunity where LLC_BI__Loan__c in :NewLoanMap.keyset()];
+            Map<Id, List<Opportunity>> LoanToOppoMap = new Map<Id, List<Opportunity>>();
+            for(Opportunity Oppo :OppoList)
+            {
+                List<Opportunity> ListNewOppo = LoanToOppoMap.get(Oppo.LLC_BI__Loan__c);
+                if(ListNewOppo == null)
+                {
+                    ListNewOppo = new List<Opportunity>();
+                    LoanToOppoMap.put(Oppo.LLC_BI__Loan__c,ListNewOppo);
+                }
+                ListNewOppo.add(Oppo);
+            }
+            List<Agreement__c> KEFAgrmntList = [select Id, Default_lessor__c from Agreement__c where id in :KEFAgreementIds];
+            Map<Id, Agreement__c> KEFAgrmntMap = New Map<Id, Agreement__c>(KEFAgrmntList);
+            
+            LLC_BI__Branch__c b = new LLC_BI__Branch__c();
+            LLC_BI__Product_Package__c pp = new LLC_BI__Product_Package__c();
+            List<Opportunity> OppoListNew = new List<Opportunity>();
+            Agreement__c KEFAgreement = new Agreement__c();
+            
+            for(LLC_BI__Loan__c l: NewLoanMap.values())
+            {
+                b = branchMap.get(l.Cost_Center__c);
+                pp = PPMap.get(l.LLC_BI__Product_Package__c);
+                OppoListNew = LoanToOppoMap.get(l.Id);
+                KEFAgreement = KEFAgrmntMap.get(l.KEF_Agreement__c);
+                
+                //Cost Center Changes
+                if(OldLoanMap!= null && ProflieName != 'Integration/Data Migration' && l.Cost_Center__c != OldLoanMap.get(l.id).Cost_Center__c && l.Cost_Center__c != null
+                   && l.LLC_BI__Product_Line__c != 'CMT' && l.LLC_BI__Product_Package__c != null)
+                {
+                    NameToAssign = b.Name.substring(0,(b.Name.length()-2)); 
+                    l.ECC_Assignment_Unit__c = NameToAssign;
+                    l.ECC_Bank_Number__c = b.ECC_Bank_Number__c;
+                    l.ECC_Location_to_Receive_Documents__c = b.id;  
+                }
+                //Underwriter Team Lead Update on Loan
+                if(l.ECC_Underwriter_Team_Lead__c== null && l.LLC_BI__Product_Package__c !=null && pp.Underwriter_Team_Lead__c != null 
+                   && l.LLC_BI__Product_Line__c != 'CMT')
+                {
+                    l.ECC_Underwriter_Team_Lead__c = pp.Underwriter_Team_Lead__c;
+                }
+                //UnderWriter1 Update
+                if(l.UW1_assigned_from_PP__c == null && l.LLC_BI__Product_Package__c !=null && pp.Underwriter_1_Assigned__c != null
+                   && l.LLC_BI__Product_Line__c != 'CMT')
+                {
+                    l.UW1_assigned_from_PP__c = pp.Underwriter_1_Assigned__c;
+                }
+                //Small Business Area Update
+                if(OldLoanMap!= null && ProflieName != 'Integration/Data Migration' && l.Line_of_Business1__c == 'Small Business' && l.Cost_Center__c != null
+                   && l.Cost_Center__c != OldLoanMap.get(l.id).Cost_Center__c)
+                {
+                    l.ECC_Small_Business_Area__c = b.ECC_Small_Business_Area__c;
+                } 
+                //Proposed Risk Rating Update
+                if(OldLoanMap!= null && l.ECC_AD_Scoring_Model_Facility_RR__c != null && l.ECC_AD_Scoring_Model_Facility_RR__c != OldLoanMap.get(l.id).ECC_AD_Scoring_Model_Facility_RR__c
+                   && !l.ECC_Override_A_D_Scoring_Model_FRR_LGD__c && pp.Total_exp__c <= 500000.00 && !pp.Bank_Division__c.contains('Small Business'))
+                {
+                    l.Proposed_Risk_Rating__c = l.ECC_AD_Scoring_Model_Facility_RR__c;
+                }
+                //LGD Update
+                if(OldLoanMap!= null && l.ECC_A_D_Scoring_Model_LGD__c != null && l.ECC_A_D_Scoring_Model_LGD__c != OldLoanMap.get(l.id).ECC_A_D_Scoring_Model_LGD__c
+                   && l.Loss_Given_Default_LGD__c != l.ECC_A_D_Scoring_Model_LGD__c && !l.ECC_Override_A_D_Scoring_Model_FRR_LGD__c && pp.Total_exp__c <= 500000.00 && 
+                   !pp.Bank_Division__c.contains('Small Business'))
+                {
+                    //Loss Given Default LGD
+                    l.Loss_Given_Default_LGD__c = l.ECC_A_D_Scoring_Model_LGD__c;
+                }
+                //Loan Hold Sub-Status is updated to Campus: Missing Information
+                if(OldLoanMap!= null && l.Hold_Sub_Status__c != null && l.Hold_Sub_Status__c == 'Campus: missing information'
+                   && l.Hold_Sub_Status__c != OldLoanMap.get(l.id).Hold_Sub_Status__c)
+                {
+                    l.ECC_Loan_Hold_Date__c = system.today();
+                }
+                //Update Loan Based on Branch Response
+                if(OldLoanMap!= null && l.ECC_Branch_Status__c != OldLoanMap.get(l.id).ECC_Branch_Status__c && l.Due_Diligence_Complete__c == false &&
+                   (l.ECC_Branch_Status__c == 'Pricing Exception Received' || l.ECC_Branch_Status__c == 'Branch Feedback Received'))
+                {
+                    l.Due_Diligence_Complete__c = true;
+                }
+                //Loan Stage Status Sync
+                if(l.LLC_BI__Product_Package__c != null && l.LLC_BI__Stage__c != pp.LLC_BI__Stage__c 
+                   && pp.LLC_BI__Stage__c != 'Complete' && l.LLC_BI__Stage__c == 'Qualification / Proposal')
+                {
+                    l.LLC_BI__Stage__c = pp.LLC_BI__Stage__c;
+                    l.LLC_BI__Status__c = pp.LLC_BI__Status__c;
+                }
+                //Move Parent Loan to Stage 9
+                if(OldLoanMap!= null && l.Due_Diligence_Complete__c == true && l.Due_Diligence_Complete__c != OldLoanMap.get(l.id).Due_Diligence_Complete__c
+                   && l.LLC_BI__Product__c == 'Purpose & Ability Line of Credit')
+                {
+                    l.LLC_BI__Stage__c = 'Booking / Funding'; //Set Parent Stage to 9
+                }
+                //Move TakeDown to Stage 6  -- do Review
+                if( OldLoanMap!= null &&  ( l.LLC_BI__ParentLoan__c != null && l.Loan_Ready_for_Stage6__c == true 
+                                           && l.Loan_Ready_for_Stage6__c != OldLoanMap.get(l.id).Loan_Ready_for_Stage6__c && 
+                                           (l.LLC_BI__Product_Type__c == 'Lease' || l.LLC_BI__Product_Type__c == 'Term Loan' ||
+                                            l.LLC_BI__Product_Type__c == 'KEF Lease' || l.LLC_BI__Product_Type__c == 'KEF Loan'
+                                           ) && (l.LLC_BI__Structure_Hierarchy__c != null && l.LLC_BI__Structure_Hierarchy__c == 'Current Takedown' )
+                                          ) ||
+                   ( l.Loan_Ready_for_Stage6__c == true && l.Loan_Ready_for_Stage6__c != OldLoanMap.get(l.id).Loan_Ready_for_Stage6__c
+                    && l.Opportunity_Source__c != null && OppoListNew[0].Distribution_Strategy__c != null && String.isEmpty(OppoListNew[0].Distribution_Strategy__c)
+                    && (l.LLC_BI__Stage__c == 'Qualification / Proposal' || l.LLC_BI__Stage__c == 'Credit Stop and Proceed' ||
+                        l.LLC_BI__Stage__c == 'Application Processing' || l.LLC_BI__Stage__c == 'Credit Underwriting'||
+                        l.LLC_BI__Stage__c == 'Credit Decisioning'
+                       )
+                   )
+                  )
+                {
+                    l.ECCP_Next_Review_Date__c = system.today();
+                    l.LLC_BI__Stage__c = 'Pre-Closing Due Diligence';
+                }
+                //Is PIC Applicable Unchecked
+                if(OldLoanMap!= null && l.ECC_PIC_Applicable__c == false && l.ECC_PIC_Applicable__c != OldLoanMap.get(l.id).ECC_PIC_Applicable__c)
+                {   //Clear/Nullify PIC Cost Center
+                    l.ECC_PIC_Cost_Center__c = null;
+                }
+                //KEF Opportunity Source - ISNEW
+                if(Trigger.isInsert && l.Opportunity_Source__c != null && OppoListNew != null)
+                {
+                    for(Opportunity Oppo:OppoListNew)
+                    {
+                        recordTypeName = Schema.getGlobalDescribe().get('Opportunity').getDescribe().getRecordTypeInfosById().get(Oppo.Id).getName();
+                        if(Oppo.Vendor_Agreement__c != null && recordTypeName.contains('KEF'))
+                        {
+                            l.KEF_Agreement__c = Oppo.Vendor_Agreement__c;
+                        }
+                        
+                    }
+                }
+                //Update HMDA DI False
+                if(OldLoanMap!= null && l.LLC_BI__HMDA_Reportable__c != OldLoanMap.get(l.id).LLC_BI__HMDA_Reportable__c &&
+                   l.LLC_BI__HMDA_Reportable__c == false && l.HMDA_DI_Required__c == true)
+                {
+                    l.HMDA_DI_Required__c = false; //HMDA DI Required New
+                }
+                //Update Obligor Number
+                if(!String.isBlank(l.LLC_BI__lookupKey__c) && (l.LLC_BI__Product_Type__c == 'KEF Loan'|| l.LLC_BI__Product_Type__c =='KEF Lease')
+                   && ProflieName != 'Integration/Data Migration' )
+                {
+                    if(l.LLC_BI__Is_Modification__c == false && l.LLC_BI__isRenewal__c == false)
+                    {
+                        l.LLC_BI__lookupKey__c = l.ECC_APP_ID__c;
+                    }
+                }
+                //REQT-02655:Move Stage from 8 to 8.5
+                if(OldLoanMap!= null && (l.Line_of_Business1__c == 'KEF' ||l.Line_of_Business1__c == 'KGF') && l.Line_of_Business1__c != null
+                   && l.LLC_BI__Stage__c == 'Pending Execution' && l.ECCP_Documents_Executed__c == true && l.LLC_BI__Stage__c != null
+                   &&  (l.Line_of_Business1__c != OldLoanMap.get(l.id).Line_of_Business1__c || 
+                        l.LLC_BI__Stage__c != OldLoanMap.get(l.id).LLC_BI__Stage__c ||
+                        l.ECCP_Documents_Executed__c != OldLoanMap.get(l.id).ECCP_Documents_Executed__c
+                       )
+                  )
+                {//Change stage to Pre Booking/Funding Due Diligence
+                    l.LLC_BI__Stage__c = 'Pre Booking/Funding Due Diligence';
+                    l.LLC_BI__Status__c = 'Open';
+                }
+                //REQT-02655:Move Stage from 8.5 to 9
+                if(OldLoanMap!= null && (l.Line_of_Business1__c == 'KEF' || l.Line_of_Business1__c == 'KGF') && l.Line_of_Business1__c != null
+                   && l.LLC_BI__Stage__c == 'Pre Booking/Funding Due Diligence' && l.LLC_BI__Stage__c != null && l.LLC_BI__Status__c == 'Ready for Booking/Funding'
+                   &&  (l.Line_of_Business1__c != OldLoanMap.get(l.id).Line_of_Business1__c || 
+                        l.LLC_BI__Stage__c != OldLoanMap.get(l.id).LLC_BI__Stage__c ||
+                        l.LLC_BI__Status__c != OldLoanMap.get(l.id).LLC_BI__Status__c
+                       )
+                  )
+                {
+                    l.LLC_BI__Stage__c = 'Booking / Funding';
+                    l.LLC_BI__Status__c = 'Open';
+                }
+                //Update Line of Business:REQT-01939
+                if(OldLoanMap!= null && !String.isBlank(l.KEF_Agreement__c) && (l.KEF_Agreement__c != OldLoanMap.get(l.id).KEF_Agreement__c || Trigger.IsInsert)
+                   && ProflieName != 'Integration/Data Migration')
+                {
+                    if(KEFAgreement.Default_lessor__c == 'KEF' || KEFAgreement.Default_lessor__c == 'KEF-PL' || KEFAgreement.Default_lessor__c == 'Selco')
+                    {
+                        l.Line_of_Business1__c = 'KEF';
+                    } 
+                    else if(KEFAgreement.Default_lessor__c == 'KGF' || KEFAgreement.Default_lessor__c == 'KGF-PL')
+                    {
+                        l.Line_of_Business1__c = 'KGF';       
+                    }
+                }
+                //REQT-01939:When Agreement is Changed to BLANK
+                if(OldLoanMap!= null && !String.isBlank(l.KEF_Agreement__c) && l.KEF_Agreement__c != OldLoanMap.get(l.id).KEF_Agreement__c && !Trigger.isInsert
+                   && ProflieName != 'Integration/Data Migration'
+                  )
+                {
+                    l.Line_of_Business1__c = null;
+                }
+                //update Total Disbursed and Undisbursed
+                if(OldLoanMap != null && l.ECC_Sum_of_Disbursements__c != OldLoanMap.get(l.id).ECC_Sum_of_Disbursements__c && ProflieName != 'Integration/Data Migration')
+                {
+                    l.LLC_BI__Total_Disbursed__c = l.ECC_Sum_of_Disbursements__c;
+                    l.LLC_BI__Total_Undisbursed__c = (l.LLC_BI__Amount__c - l.ECC_Sum_of_Disbursements__c);
+                }
+                //loanListUpd.add(l);
+            }
+            //update loanListUpd;
+        }
+        
+    }
+    public void AllNodeMethodAU(Map<id, LLC_BI__Loan__c> NewLoanMap, Map<id, LLC_BI__Loan__c> OldLoanMap) 
+    {
+        if(NewLoanMap != null)
+        {
+            List<Profile> PROFILE = [SELECT Id, Name FROM Profile WHERE Id=:userinfo.getProfileId() LIMIT 1];
+            String ProflieName = PROFILE[0].Name;
+            Set<Id> branchIds = new set<Id>();
+            Set<Id> PPIds = new set<Id>();
+            Set<Id> OppoIds = new Set<Id>();
+            Set<Id> ParentLoanIds = new Set<Id>();
+            Set<Id> KEFAgreementIds = new Set<Id>();
+            String NameToAssign =null;
+            string recordTypeName = null;
+            List<LLC_BI__Loan__c> loanListUpd = new List<LLC_BI__Loan__c>();
+            List<LLC_BI__Loan_Covenant__c> lcListUpd = new List<LLC_BI__Loan_Covenant__c>();
+            List<TSO_CAP_Data__c> tcdListUpd = new List<TSO_CAP_Data__c>();
+            List<LLC_BI__Product_Package__c> ppUpd = new List<LLC_BI__Product_Package__c>();
+            Set<LLC_BI__Product_Package__c> ppSetUpd = new Set<LLC_BI__Product_Package__c>();
+            List<LLC_BI__Opportunity_History__c> OppoHistUpd = new List<LLC_BI__Opportunity_History__c>();
+            List<Opportunity> OppoUpd = new List<Opportunity>();
+            List<OpportunityLineItem> OppoLineItemUpd = new List<OpportunityLineItem>();
+            List<LLC_BI__Loan__c> ParentLoanUpd = new List<LLC_BI__Loan__c>();
+            List<ECC_Disbursement_Information__c> DIListUpd = new List<ECC_Disbursement_Information__c>();
+            
+            for(LLC_BI__Loan__c l:NewLoanMap.values())
+            {
+                branchIds.add(l.Cost_Center__c);
+                PPIds.add(l.LLC_BI__Product_Package__c);
+                ParentLoanIds.add(l.LLC_BI__ParentLoan__c);
+                KEFAgreementIds.add(l.KEF_Agreement__c);
+            }
+            List<LLC_BI__Branch__c> branchList = [select id, Name, ECC_Bank_Number__c, ECC_Small_Business_Area__c from LLC_BI__Branch__c where id in :branchIds];
+            Map<Id, LLC_BI__Branch__c> branchMap = New Map<Id, LLC_BI__Branch__c>(branchList);
+            List<LLC_BI__Product_Package__c> PPList = [select id, Underwriter_Team_Lead__c,Underwriter_1_Assigned__c,LLC_BI__Stage__c,LLC_BI__Status__c, Loan_Has_Complete_Financial_Package__c,ECC_Complete_Financial_Package_Date__c, Total_exp__c,Bank_Division__c, Private__c from LLC_BI__Product_Package__c where id in :PPIds];
+            Map<Id, LLC_BI__Product_Package__c> PPMap = new Map<Id, LLC_BI__Product_Package__c>(PPList);
+            
+            
+            List<LLC_BI__Loan_Covenant__c> lcList = [select id,LLC_BI__Loan__c, ECC_Loan_is_Approved__c from LLC_BI__Loan_Covenant__c where LLC_BI__Loan__c in :NewLoanMap.keyset()];
+            Map<Id,List<LLC_BI__Loan_Covenant__c>> LoantoLCMap = new Map<Id,List<LLC_BI__Loan_Covenant__c>>();
+            for(LLC_BI__Loan_Covenant__c lc: lcList)
+            {
+                List<LLC_BI__Loan_Covenant__c> listNewLC = LoantoLCMap.get(lc.LLC_BI__Loan__c);
+                if(listNewLC == null)
+                {
+                    listNewLC = new List<LLC_BI__Loan_Covenant__c>();
+                    LoantoLCMap.put(lc.LLC_BI__Loan__c, listNewLC);
+                }
+                listNewLC.add(lc);
+            }
+            List<TSO_CAP_Data__c> tcdList = [select id, Loan_Stage__c, Loan__c from TSO_CAP_Data__c where Loan__c in :NewLoanMap.keyset()];
+            Map<Id,List<TSO_CAP_Data__c>> LoantoTCDMap = new Map<Id,List<TSO_CAP_Data__c>>();
+            for(TSO_CAP_Data__c tcd: tcdList)
+            {
+                List<TSO_CAP_Data__c> listNewTCD = LoantoTCDMap.get(tcd.Loan__c);
+                if(listNewTCD == null)
+                {
+                    listNewTCD = new List<TSO_CAP_Data__c>();
+                    LoantoTCDMap.put(tcd.Loan__c, listNewTCD);
+                }
+                listNewTCD.add(tcd);
+            }
+            List<LLC_BI__Opportunity_History__c> OppHistList = [select id, Private__c, LLC_BI__Loan__c from LLC_BI__Opportunity_History__c where LLC_BI__Loan__c in :NewLoanMap.keyset()];
+            Map<Id, List<LLC_BI__Opportunity_History__c>> LoanToOppoHistMap = new Map<Id, List<LLC_BI__Opportunity_History__c>>();
+            for(LLC_BI__Opportunity_History__c OppoHist :OppHistList)
+            {
+                List<LLC_BI__Opportunity_History__c> ListNewOppoHist = LoanToOppoHistMap.get(OppoHist.LLC_BI__Loan__c);
+                if(ListNewOppoHist == null)
+                {
+                    ListNewOppoHist = new List<LLC_BI__Opportunity_History__c>();
+                    LoanToOppoHistMap.put(OppoHist.LLC_BI__Loan__c,ListNewOppoHist);
+                }
+                ListNewOppoHist.add(OppoHist);
+            }
+            List<Opportunity> OppoList = [select id, IsPrivate, Vendor_Agreement__c from Opportunity where LLC_BI__Loan__c in :NewLoanMap.keyset()];
+            Map<Id, List<Opportunity>> LoanToOppoMap = new Map<Id, List<Opportunity>>();
+            for(Opportunity Oppo :OppoList)
+            {
+                OppoIds.add(Oppo.Id);
+                List<Opportunity> ListNewOppo = LoanToOppoMap.get(Oppo.LLC_BI__Loan__c);
+                if(ListNewOppo == null)
+                {
+                    ListNewOppo = new List<Opportunity>();
+                    LoanToOppoMap.put(Oppo.LLC_BI__Loan__c,ListNewOppo);
+                }
+                ListNewOppo.add(Oppo);
+            }
+            //OpportunityLineItem is Opportunity Product
+            List<OpportunityLineItem> OppoProdList = [select Id, Loan__c, Opportunity__c from OpportunityLineItem where Opportunity__c in :OppoIds];
+            Map<Id, List<OpportunityLineItem>> OppoToOppoLineItemMap = new Map<Id, List<OpportunityLineItem>>();
+            for(OpportunityLineItem OppoLineItem :OppoProdList)
+            {
+                List<OpportunityLineItem> ListNewOppoLineItem = OppoToOppoLineItemMap.get(OppoLineItem.Opportunity__c);
+                if(ListNewOppoLineItem == null)
+                {
+                    ListNewOppoLineItem = new List<OpportunityLineItem>();
+                    OppoToOppoLineItemMap.put(OppoLineItem.Opportunity__c,ListNewOppoLineItem);
+                }
+                ListNewOppoLineItem.add(OppoLineItem);
+            }
+            List<LLC_BI__Loan__c> ParentLoanList = [select id, LLC_BI__Product_Type__c, LLC_BI__AmountOutstanding__c from LLC_BI__Loan__c where id in :ParentLoanIds];
+            Map<Id, LLC_BI__Loan__c> ParentLoanMap = new Map<Id, LLC_BI__Loan__c>(ParentLoanList);
+            List<Agreement__c> KEFAgrmntList = [select Id, Default_lessor__c from Agreement__c where id in :KEFAgreementIds];
+            Map<Id, Agreement__c> KEFAgrmntMap = New Map<Id, Agreement__c>(KEFAgrmntList);
+            List<ECC_Disbursement_Information__c> DIList = [select Id, ECC_Loan__c, Status__c from ECC_Disbursement_Information__c where ECC_Loan__c in :NewLoanMap.keyset()];
+            Map<Id, List<ECC_Disbursement_Information__c>> LoanToDIMap = new Map<Id, List<ECC_Disbursement_Information__c>>();
+            for(ECC_Disbursement_Information__c DI :DIList)
+            {
+                List<ECC_Disbursement_Information__c> ListNewDI = LoanToDIMap.get(DI.ECC_Loan__c);
+                if(ListNewDI == null)
+                {
+                    ListNewDI = new List<ECC_Disbursement_Information__c>();
+                    LoanToDIMap.put(DI.ECC_Loan__c,ListNewDI);
+                }
+                ListNewDI.add(DI);
+            }
+            
+            LLC_BI__Branch__c b = new LLC_BI__Branch__c();
+            LLC_BI__Product_Package__c pp = new LLC_BI__Product_Package__c();
+            LLC_BI__Loan__c parentLoan = new LLC_BI__Loan__c();
+            List<LLC_BI__Loan_Covenant__c> lcListNew = new List<LLC_BI__Loan_Covenant__c>();
+            List<TSO_CAP_Data__c> tcdListNew = new List<TSO_CAP_Data__c>();
+            List<LLC_BI__Opportunity_History__c> OppHistListNew = new List<LLC_BI__Opportunity_History__c>();
+            List<Opportunity> OppoListNew = new List<Opportunity>();
+            List<OpportunityLineItem> OppoLineItemListNew = new List<OpportunityLineItem>();
+            Agreement__c KEFAgreement = new Agreement__c();
+            List<ECC_Disbursement_Information__c> DIListNew = new List<ECC_Disbursement_Information__c>();
+            
+            for(LLC_BI__Loan__c l: NewLoanMap.values())
+            {
+                b = branchMap.get(l.Cost_Center__c);
+                pp = PPMap.get(l.LLC_BI__Product_Package__c);
+                lcListNew = LoantoLCMap.get(l.id);
+                tcdListNew = LoantoTCDMap.get(l.id);
+                OppHistListNew = LoanToOppoHistMap.get(l.Id);
+                OppoListNew = LoanToOppoMap.get(l.Id);
+                parentLoan = ParentLoanMap.get(l.Id);
+                KEFAgreement = KEFAgrmntMap.get(l.KEF_Agreement__c);
+                DIListNew = LoanToDIMap.get(l.Id);
+                
+                //Update Loan Covenants
+                if(lcListNew != null && lcListNew.size()>0)
+                {
+                    for(LLC_BI__Loan_Covenant__c lc:lcListNew)
+                    {
+                        if(OldLoanMap!= null && (l.LLC_BI__Stage__c == 'Pre-Closing Due Diligence'||l.LLC_BI__Stage__c == 'Doc Prep and Doc Review'||
+                                                 l.LLC_BI__Stage__c == 'Pending Execution' ||  l.LLC_BI__Stage__c == 'Booking / Funding'
+                                                 ||l.LLC_BI__Stage__c == 'Booked'|| l.LLC_BI__Stage__c == 'Closed') && l.LLC_BI__Stage__c != OldLoanMap.get(l.id).LLC_BI__Stage__c
+                           && lc.ECC_Loan_is_Approved__c != 1)
+                        {
+                            lc.ECC_Loan_is_Approved__c = 1;
+                            lcListUpd.add(lc);
+                        }
+                    }
+                }
+                //Update CAP Data Stage
+                if(OldLoanMap!= null && l.LLC_BI__Status__c != OldLoanMap.get(l.id).LLC_BI__Status__c && l.LLC_BI__Status__c == 'TSO Due Diligence')
+                {
+                    if(tcdListNew != null && tcdListNew.size()>0)
+                    {
+                        for(TSO_CAP_Data__c tcd :tcdListNew)
+                        {
+                            tcd.Loan_Stage__c = 'Complete';
+                            tcdListUpd.add(tcd);
+                        }
+                    }  
+                }
+                //Update PP - Reg B and Reg B date
+                if(l.LLC_BI__Product_Package__c != null && !pp.Loan_Has_Complete_Financial_Package__c && l.Complete_Financial_Package_Submitted__c 
+                   && pp.id != null && !String.isBlank(pp.id) && l.LLC_BI__Stage__c == 'Application Processing')
+                {
+                    pp.ECC_Complete_Financial_Package_Date__c = system.today();
+                    pp.Loan_Has_Complete_Financial_Package__c = true;
+                }
+                //Set child object Private based on Loan
+                if(OldLoanMap!= null && l.Private__c != OldLoanMap.get(l.id).Private__c)
+                {
+                    //Update Opportunity History Records
+                    for(LLC_BI__Opportunity_History__c OppoHist:OppHistListNew)
+                    {
+                        OppoHist.Private__c = l.Private__c;
+                        OppoHistUpd.add(OppoHist);
+                    }
+                }
+                //Update Private flag on PP
+                if(Trigger.isInsert && Trigger.isAfter && !String.isBlank(l.LLC_BI__Product_Package__c)
+                   && !String.isBlank(l.Opportunity_Source__c ) && ProflieName != 'Integration/Data Migration' && OppoListNew != null)
+                {
+                    for(Opportunity Oppo:OppoListNew)
+                    {
+                        if(Oppo.Private__c == true)
+                        {
+                            pp.Private__c = true;
+                        }
+                    }
+                }
+                //Converted Loan - Push ID to Opp Product -- can be optimized
+                if(Trigger.isInsert && !String.isBlank(l.ECC_Opportunity_Product__c) && ProflieName != 'Integration/Data Migration' && OppoListNew != null)
+                { //Send Loan ID to OppProduct
+                    for(Opportunity Oppo:OppoListNew)
+                    {
+                        OppoLineItemListNew = OppoToOppoLineItemMap.get(Oppo.Id);
+                        if(OppoLineItemListNew != null)
+                        {
+                            for(OpportunityLineItem olt: OppoLineItemListNew)
+                            {
+                                if(olt.id == l.ECC_Opportunity_Product__c)
+                                {
+                                    olt.Loan__c = l.Id;
+                                    OppoLineItemUpd.add(olt);
+                                }
+                            }
+                        }
+                    }
+                    
+                }
+                //Update Parent Outstanding Amount when TakeDown exists for KEF loans
+                if(OldLoanMap!= null && l.LLC_BI__Stage__c != 'Booked' && l.LLC_BI__Stage__c != 'Complete' && l.LLC_BI__Status__c != 'Withdrawn'
+                   && l.LLC_BI__Amount__c != OldLoanMap.get(l.id).LLC_BI__Amount__c && l.LLC_BI__ParentLoan__c  != null
+                   && (l.LLC_BI__Product_Type__c == 'KEF Loan' || l.LLC_BI__Product_Type__c == 'KEF Lease'))
+                { //Update the 'Amount Outstanding' on Parent Loan for KEF Loan Pdt Type
+                    if(parentLoan != null && 
+                       (parentLoan.LLC_BI__Product_Type__c == 'KEF Lease' || parentLoan.LLC_BI__Product_Type__c == 'KEF Loan' 
+                        || parentLoan.LLC_BI__Product_Type__c == 'Guidance Line') )
+                    {
+                        if(String.isBlank(String.valueOf(parentLoan.LLC_BI__AmountOutstanding__c))){
+                            parentLoan.LLC_BI__AmountOutstanding__c = l.LLC_BI__Amount__c;
+                        } else if(String.isBlank(String.valueOf(OldLoanMap.get(l.id).LLC_BI__Amount__c))){
+                            parentLoan.LLC_BI__AmountOutstanding__c = parentLoan.LLC_BI__AmountOutstanding__c - 0;
+                        }else{
+                            parentLoan.LLC_BI__AmountOutstanding__c = parentLoan.LLC_BI__AmountOutstanding__c - (OldLoanMap.get(l.id).LLC_BI__Amount__c+l.LLC_BI__Amount__c);
+                        }
+                        
+                    }
+                }
+                //Update outstanding amount on parent loan when take down is Withdrawn
+                if(OldLoanMap!= null && ((l.LLC_BI__Stage__c != OldLoanMap.get(l.id).LLC_BI__Stage__c && l.LLC_BI__Stage__c == 'Complete')
+                                         || (l.LLC_BI__Status__c != OldLoanMap.get(l.id).LLC_BI__Status__c && l.LLC_BI__Status__c == 'Withdrawn'))
+                   && l.LLC_BI__ParentLoan__c != null && (l.LLC_BI__Product_Type__c == 'KEF Loan' || l.LLC_BI__Product_Type__c == 'KEF Lease')
+                   && l.LLC_BI__Amount__c != null)
+                {
+                    if(parentLoan != null && 
+                       (parentLoan.LLC_BI__Product_Type__c == 'KEF Lease' || parentLoan.LLC_BI__Product_Type__c == 'KEF Loan' 
+                        || parentLoan.LLC_BI__Product_Type__c == 'Guidance Line') )
+                    {
+                        parentLoan.LLC_BI__AmountOutstanding__c = parentLoan.LLC_BI__AmountOutstanding__c - l.LLC_BI__Amount__c;
+                    }
+                }
+                //Update Parent When KEF takedown booked
+                if(OldLoanMap!= null &&  ((l.LLC_BI__Stage__c != OldLoanMap.get(l.id).LLC_BI__Stage__c && l.LLC_BI__Stage__c == 'Booked') 
+                                          && l.LLC_BI__Status__c == 'Open' && l.LLC_BI__ParentLoan__c != null &&
+                                          (l.LLC_BI__Product_Type__c == 'KEF Loan' || l.LLC_BI__Product_Type__c == 'KEF Lease' || 
+                                           l.LLC_BI__Product_Type__c == 'Guidance Line'))
+                   && l.LLC_BI__Amount__c != null
+                  )
+                {
+                    if(parentLoan != null && 
+                       (parentLoan.LLC_BI__Product_Type__c == 'KEF Lease' || parentLoan.LLC_BI__Product_Type__c == 'KEF Loan' 
+                        || parentLoan.LLC_BI__Product_Type__c == 'Guidance Line') )
+                    {
+                        parentLoan.LLC_BI__AmountOutstanding__c = parentLoan.LLC_BI__AmountOutstanding__c - l.LLC_BI__Amount__c;
+                        parentLoan.LLC_BI__Amount_New_Money__c = parentLoan.LLC_BI__Amount_New_Money__c - l.LLC_BI__Amount__c;
+                        parentLoan.LLC_BI__Amount__c = parentLoan.LLC_BI__Amount__c - l.LLC_BI__Amount__c;
+                    }
+                }
+                //Update Underwriting Group - do Review
+                if(Trigger.isInsert && l.KEF_Agreement__c != null && !String.isBlank(KEFAgreement.Default_lessor__c)
+                   && l.LLC_BI__Product_Package__c != null && !String.isBlank(l.Opportunity_Source__c) && l.Opportunity_Source__c != null && OppoListNew != null)
+                {
+                    for(Opportunity oppo:OppoListNew)
+                    {
+                        if(oppo.Bank_Underwritten__c == 'Keybank Underwritten' && 
+                           (l.ECC_Product_Package_Stage__c == 'Qualification / Proposal' 
+                            /*|| OldLoanMap.get(l.id).ECC_Product_Package_Stage__c == 'Complete' */ //Is New() with Old Value check
+                           ) 
+                          )
+                        {
+                            pp.Underwriting_Group__c = KEFAgreement.Default_lessor__c;
+                        }
+                    }
+                }
+                //Update Owning Grp on PP for KYC Source
+                if(OldLoanMap!= null && (Trigger.isInsert || l.ECC_Source__c != OldLoanMap.get(l.id).ECC_Source__c) && l.ECC_Source__c == 'KYC'
+                   && l.LLC_BI__Product_Package__c != null)
+                {
+                    pp.Underwriting_Group__c = 'Small Business';
+                }
+                //Update volume on Opty
+                if(OldLoanMap!= null && l.LLC_BI__Amount__c != OldLoanMap.get(l.id).LLC_BI__Amount__c && l.Opportunity_Source__c != null 
+                   && l.LLC_BI__Stage__c != 'Booked' && OppoListNew != null)
+                {
+                    for(Opportunity Oppo: OppoListNew)
+                    {
+                        if(Schema.getGlobalDescribe().get('Opportunity').getDescribe().getRecordTypeInfosById().get(Oppo.Id).getName().contains('KEF'))
+                        {
+                            Oppo.Volume__c = l.LLC_BI__Amount__c;
+                            OppoUpd.add(Oppo);
+                        }
+                    }
+                }
+                //Update Sales Stage on Opty for KEF
+                if(OldLoanMap!= null && l.LLC_BI__Stage__c != OldLoanMap.get(l.id).LLC_BI__Stage__c && l.Opportunity_Source__c != null 
+                   && l.LLC_BI__Stage__c == 'Booked' && ProflieName != 'Integration/Data Migration' && OppoListNew != null)
+                {
+                    for(Opportunity Oppo: OppoListNew)
+                    {
+                        if(Schema.getGlobalDescribe().get('Opportunity').getDescribe().getRecordTypeInfosById().get(Oppo.Id).getName().contains('KEF'))
+                        {
+                            Oppo.Actual_Close_Date__c = system.today();
+                            Oppo.Reason__c = 'Full Solution Provided';
+                            Oppo.StageName = 'Closed';
+                            OppoUpd.add(Oppo);
+                        }
+                    }
+                }
+                //REQT-02654:Auto Approve Disbursement Information(s)
+                if(OldLoanMap!= null && l.LLC_BI__Status__c != OldLoanMap.get(l.id).LLC_BI__Status__c && l.LLC_BI__Status__c == 'Funding Approved')
+                {//Mark Disbursement Information(s) to Approved
+                    for(ECC_Disbursement_Information__c DI: DIListNew)
+                    {
+                        if(DI.Status__c != 'Approved' && DI.Status__c != 'Rejected')
+                        {
+                            DI.Status__c = 'Approved';
+                            DIListUpd.add(DI);
+                        }
+                    }
+                }
+                if(parentLoan != null){
+                    ParentLoanUpd.add(parentLoan);    
+                }
+                
+                if(ppSetUpd != null && ppSetUpd.contains(pp)){
+                    ppSetUpd.remove(pp);
+                    ppSetUpd.add(pp); 
+                } else {
+                    ppSetUpd.add(pp); 
+                }
+            }
+            if(ParentLoanUpd != null){
+                update ParentLoanUpd;
+            }
+            if(DIListUpd != null){
+                update DIListUpd;
+            }
+            if(OppoUpd != null){
+                update OppoUpd;
+            }
+            if(ppSetUpd != null){
+                ppUpd.addall(ppSetUpd);
+                update ppUpd;   
+            }
+            if(OppoLineItemUpd !=null){
+                update OppoLineItemUpd;   
+            }
+            if(OppoHistUpd!= null){
+                update OppoHistUpd;
+            }
+            if(tcdListUpd != null){
+                update tcdListUpd;
+            }
+            if(lcListUpd != null){
+                update lcListUpd;
+            }
+            
+        }
+    }
+    
+    public void AllRelatedSObjectInsertNodeMethod(Map<id, LLC_BI__Loan__c> NewLoanMap, Map<id, LLC_BI__Loan__c> OldLoanMap)
+    {
+        List<Profile> PROFILE = [SELECT Id, Name FROM Profile WHERE Id=:userinfo.getProfileId() LIMIT 1];
+        String ProflieName = PROFILE[0].Name;
+        List<ECC_Loan_Extension__c> leList = new List<ECC_Loan_Extension__c>();
+        List<ECC_Risk_Rating_History__c> rrhList = new List<ECC_Risk_Rating_History__c>();
+        set<Id> AccountIds = new set<Id>();
+        set<Id> PPIds = new set<Id>();
+        Set<Id> UserIds = new set<Id>();
+        List<Id> LoansId = new List<Id>();
+        List<LLC_BI__Credit_Memo_Modifcation__c> MemoList = new List<LLC_BI__Credit_Memo_Modifcation__c>();
+        if(NewLoanMap != null)
+        {
+            for(LLC_BI__Loan__c l:NewLoanMap.values())
+            {
+                AccountIds.add(l.LLC_BI__Account__c);
+                PPIds.add(l.LLC_BI__Product_Package__c);
+                UserIds.add(l.UW1_assigned_from_PP__c);
+            }
+            List<Account> accList = [select id, AccountNumber, Current_Risk_Rating__c, ECCP_Risk_Rating_Date__c, Name, Non_CLS_Current_Risk_Rating__c, Obligor_Risk_Rating_Justification__c, Obligor_Risk_Rating_Model_Used__c, Override_A_D_Scoring_Model_Risk_Rating__c, Probability_of_Default_Grade__c, Probability_of_Default__c, Proposed_Risk_Rating__c, Scoring_Model_Risk_Rating__c from Account where id in :AccountIds];
+            Map<Id, Account> accMap = new Map<Id, Account>(accList);
+            List<LLC_BI__Product_Package__c> PPList = [select id, Credit_Authority_Name__c, Delegated_Authority_Name__c from LLC_BI__Product_Package__c where id in :PPIds];
+            Map<Id, LLC_BI__Product_Package__c> PPMap = new Map<Id, LLC_BI__Product_Package__c>(PPList);
+            for(LLC_BI__Product_Package__c pp: PPList)
+            {
+                UserIds.add(pp.Credit_Authority_Name__c);
+                UserIds.add(pp.Delegated_Authority_Name__c);
+            }
+            List<User> UserList = [select Id, Name from User where Id in :UserIds];
+            Map<Id, User> UserMap = New Map<Id, User>(UserList);
+            
+            for(LLC_BI__Loan__c l :NewLoanMap.values())
+            {
+                //Create New Loan Expansion Record............for new Loan only
+                if(ProflieName != 'Integration/Data Migration' && Trigger.isInsert)
+                {
+                    ECC_Loan_Extension__c le = new ECC_Loan_Extension__c();
+                    le.Loan__c = l.id;
+                    leList.add(le);
+                }
+                
+                //Check For Memo Approved Count And Loan Stage
+                if(OldLoanMap != null && l.ECC_Memo_Approved_Count__c != OldLoanMap.get(l.id).ECC_Memo_Approved_Count__c || 
+                   (l.LLC_BI__Stage__c == 'Pre Booking/Funding Due Diligence' && l.LLC_BI__Stage__c != OldLoanMap.get(l.id).LLC_BI__Stage__c ))
+                {
+                    Account acc = accMap.get(l.LLC_BI__Account__c);
+                    ECC_Risk_Rating_History__c rrh = new ECC_Risk_Rating_History__c();
+                    rrh.ECC_A_D_Scoring_Model_LGD__c = l.ECC_A_D_Scoring_Model_LGD__c;
+                    rrh.ECC_Account_Name__c = acc.Name;
+                    rrh.ECC_Current_Obligor_Risk_Rating__c = acc.Current_Risk_Rating__c;
+                    rrh.ECC_Current_Risk_Rating__c = l.Current_Risk_Rating__c;
+                    rrh.ECC_ECC_AD_Scoring_Model_Facility_RR__c = l.ECC_AD_Scoring_Model_Facility_RR__c;
+                    rrh.ECC_Exam_Class_Factor__c = l.ECC_Exam_Class_Factor__c;
+                    rrh.ECC_Exam_Risk_Amount__c = l.ECC_Exam_Risk_Amount__c;
+                    rrh.ECC_Exam_Risk_Date__c = l.ECC_Exam_Risk_Date__c;
+                    rrh.ECC_Facility_Risk_Rating_Justification__c = l.Facility_Risk_Rating_Justification__c;
+                    rrh.ECC_Facility_Risk_Rating_Model_Used__c = l.Facility_Risk_Rating_Model_Used__c;
+                    rrh.ECC_Loan__c = l.id;
+                    rrh.ECC_Loss_Given_Default_LGD__c = l.Loss_Given_Default_LGD__c;
+                    rrh.ECC_Next_Review_Date__c = l.ECC_Next_Review_date__c;
+                    rrh.ECC_Non_CLS_Current_Risk_Rating__c = acc.Non_CLS_Current_Risk_Rating__c;
+                    rrh.ECC_ObligorNumber__c = acc.AccountNumber;
+                    rrh.ECC_Obligor_Risk_Rating_Justification__c = acc.Obligor_Risk_Rating_Justification__c;
+                    rrh.ECC_Obligor_Risk_Rating_Model_Used__c = acc.Obligor_Risk_Rating_Model_Used__c;
+                    rrh.ECC_Override_A_D_Scoring_Mod_Risk_Rating__c = acc.Override_A_D_Scoring_Model_Risk_Rating__c;
+                    rrh.ECC_Override_A_D_Scoring_Model_FRR_LGD__c = l.ECC_Override_A_D_Scoring_Model_FRR_LGD__c;
+                    if(PPMap.get(l.id) != null && PPMap.get(l.id).Credit_Authority_Name__c != null){
+                        rrh.ECC_PP_Credit_Approver__c = UserMap.get(PPMap.get(l.id).Credit_Authority_Name__c).Name;
+                    }
+                    if(PPMap.get(l.id) != null && PPMap.get(l.id).Delegated_Authority_Name__c != null){
+                        rrh.ECC_PP_Delegated_Approver__c = UserMap.get(PPMap.get(l.id).Delegated_Authority_Name__c).Name;
+                    }
+                    rrh.ECC_Probability_of_Default_Grade__c = acc.Probability_of_Default_Grade__c;
+                    rrh.ECC_Probability_of_Default__c = acc.Probability_of_Default__c;
+                    rrh.ECC_Proposed_Facility_Risk_Rating__c = l.Proposed_Risk_Rating__c;
+                    rrh.ECC_Proposed_Risk_Rating__c = acc.Proposed_Risk_Rating__c;
+                    rrh.ECC_Risk_Rating_Date__c = acc.ECCP_Risk_Rating_Date__c;
+                    rrh.ECC_Scoring_Model_Risk_Rating__c = acc.Scoring_Model_Risk_Rating__c;
+                    if(l.UW1_assigned_from_PP__c != null && UserMap.get(l.UW1_assigned_from_PP__c) != null){
+                        rrh.ECC_Underwriter_Name__c = UserMap.get(l.UW1_assigned_from_PP__c).Name;   
+                    }
+                    rrhList.add(rrh);
+                }
+                
+                //Create Memo for Branch
+                if(OldLoanMap != null && l.ECC_Type_of_Exception__c != null && l.ECC_Type_of_Exception__c != OldLoanMap.get(l.Id).ECC_Type_of_Exception__c)
+                {
+                    Boolean FeeChange = false;
+                    Boolean LoanTerm = false;
+                    Boolean LoanRate = false;
+                    LLC_BI__Credit_Memo_Modifcation__c Memo = new LLC_BI__Credit_Memo_Modifcation__c();
+                    Memo.LLC_BI__Loan__c = l.id;
+                    Memo.ECC_Approval_Date__c = l.ECC_Branch_Approval_Date__c;
+                    Memo.ECC_Approved_Changes_Implemented__c = true;
+                    Memo.ECC_Branch_Approver__c = l.ECC_Branch_Approver__c;
+                    Memo.ECC_Branch_RM_Reviewed__c = l.ECC_Branch_RM_Reviewed__c;
+                    if(l.ECC_Type_of_Exception__c.contains('Fees')){
+                        FeeChange = True;
+                    }
+                    Memo.ECC_Fee_Change__c = FeeChange;
+                    Memo.ECC_Received_by_Branch__c = true;
+                    Memo.LLC_BI__Approval_Status__c = 'Approved';
+                    if(l.ECC_Type_of_Exception__c.contains('Loan Term')){
+                        LoanTerm = True;
+                    }
+                    Memo.LLC_BI__Loan_Term_Change__c = LoanTerm;
+                    if(l.ECC_Type_of_Exception__c.contains('Loan Rate')){
+                        LoanRate = True;
+                    }
+                    Memo.LLC_BI__New_Rate_Requested__c = LoanRate;
+                    MemoList.add(Memo);
+                }
+            }
+            if(MemoList != null){
+                insert MemoList;
+            }
+            if(rrhList != null){
+                insert rrhList;
+            }
+            if(leList != null){
+               insert leList; 
+            }
+        }
+    }
+}
+
+
+PPProcessBuilderHandler:
+------------------------------------
+public without sharing class PPProcessBuilderHandler {        
+    Public void PPUpdation_BUAI(Map < Id, LLC_BI__Product_Package__c > oldRecordMap, Map < Id, LLC_BI__Product_Package__c > newRecordMap) {                
+        list<LLC_BI__Product_Package__c > Pplist=  new list<LLC_BI__Product_Package__c >();
+        //In process builder Node name "LOB Equals Business banking"
+        for(LLC_BI__Product_Package__c pp:newRecordMap.values()){
+            if(Trigger.isUpdate && pp.Bank_Division__c == 'Business Banking' && pp.ECC_Spread_Requester__c == NULL && pp.LLC_BI__Primary_Officer__c != NULL ){                    
+                pp.ECC_Spread_Requester__c=pp.LLC_BI__Primary_Officer__c;
+                
+            }
+             //In process builder Node name"PopulateRMManager"
+            if(oldRecordMap!= null && (pp.LLC_BI__Primary_Officer__c != null || pp.LLC_BI__Primary_Officer__c != oldRecordMap.get(pp.id).LLC_BI__Primary_Officer__c || oldRecordMap.get(pp.id).LLC_BI__Primary_Officer__c == null || pp.LLC_BI__Primary_Officer__r.managerId != null)){
+                pp.RM_Manager__c = pp.LLC_BI__Primary_Officer__r.managerId;
+                
+            }
+        }
+        
+        id prodPackageTreasuryRecId = Schema.SObjectType.LLC_BI__Product_Package__c.getRecordTypeInfosByName().get('Treasury').getRecordTypeId();
+        id prodPackageLoanRecId = Schema.SObjectType.LLC_BI__Product_Package__c.getRecordTypeInfosByName().get('Loan').getRecordTypeId();
+        //In process builder Node name  "TSO - PP Marked as Suitability"
+        for(LLC_BI__Product_Package__c ppsp:newRecordMap.values()){
+            if(ppsp.TSO_Submit_for_Suitability_Review__c == true && ppsp.LLC_BI__Stage__c== 'Order Entry' && ppsp.recordtypeid==prodPackageTreasuryRecId){
+                ppsp.LLC_BI__Stage__c='Qualification / Proposal';
+                ppsp.LLC_BI__Status__c='Open';
+                ppsp.recordtypeid=prodPackageLoanRecId;
+                
+            }
+            
+        }         
+                //In process builder Node name "Is Renewal/Mod "        
+        for(LLC_BI__Product_Package__c ppssp:newRecordMap.values()){
+            
+            if(oldRecordMap!= null && ppssp.ECC_isrenewalormod__c == true && ppssp.ECC_isrenewalormod__c!= oldRecordMap.get(ppssp.id).ECC_isrenewalormod__c && ppssp.recordtype.DeveloperName =='Loan' && ppssp.LLC_BI__Loan_Facilities_Count__c > 0 && ppssp.RecordType != NULL){
+                ppssp.LLC_BI__Credit_Memo__c='';
+                ppssp.Underwriter_1_Assigned__c='';
+                ppssp.Underwriter_Team_Lead__c='';                    
+                
+            }
+        }
+        
+    }        
+    
+    
+    Public void PPUpdation_AU(Map < Id, LLC_BI__Product_Package__c > oldRecordMap, Map < Id, LLC_BI__Product_Package__c > newRecordMap)                
+    {
+        list<LLC_BI__Product_Package__c > Pplist=  new list<LLC_BI__Product_Package__c >();
+        list<LLC_BI__Loan__c > Loanlist=  new list<LLC_BI__Loan__c >();
+        list<LLC_BI__Review__c > Rewlist=  new list<LLC_BI__Review__c >();        
+        list<ECC_Product_Package_History__c> Hislist=  new list<ECC_Product_Package_History__c>();
+        list<ECC_Credit_Request__c > Crerelist =  new list<ECC_Credit_Request__c >();        
+        List <LLC_BI__Loan__c> loanListq = [SELECT id, LLC_BI__Stage__c,LLC_BI__Status__c,Private__c,
+                                            ECC_Mail_Systems_Letter_Code__c,ECC_Mail_Systems_Letter_Send_Date__c,
+                                            Line_of_Business1__c,ECC_Dealer_PM__c, LLC_BI__Product_Package__c, 
+                                            ECC_Non_Fico_Count__c, ECC_Integration_Status__c, 
+                                            ECC_Credit_Bureau_Error_Description__c from LLC_BI__Loan__c 
+                                            where  LLC_BI__Product_Package__c IN:newRecordMap.keySet() ];        
+        List < LLC_BI__Review__c > PPReviewQu = [SELECT id,Private__c  from LLC_BI__Review__c 
+                                                 where  LLC_BI__Product_Package__c IN: newRecordMap.keySet() ];        
+        List < ECC_Product_Package_History__c > PPHtry = [SELECT id,Private__c  from ECC_Product_Package_History__c 
+                                                          where  ECC_Product_Package__c IN: newRecordMap.keySet() ];        
+        List < ECC_Credit_Request__c > PPCrdreq = [SELECT id,Private__c  from ECC_Credit_Request__c 
+                                                   where  ECC_Product_Package__c IN: newRecordMap.keySet() ];
+        if(loanListq!=null && loanListq.size()>0){
+//In process builder Node name "Update Dealer PM on Loan "           
+            for(LLC_BI__Product_Package__c ppdeal : newRecordMap.values()){
+                if(oldRecordMap!= null && ppdeal.ECC_Dealer_PM__c != null && ppdeal.ECC_Dealer_PM__c !=oldRecordMap.get(ppdeal.id).ECC_Dealer_PM__c ){                            
+                    for (LLC_BI__Loan__c loanRec: loanListq ){                        
+                        if(loanRec.LLC_BI__Stage__c != 'Booked' &&loanRec.LLC_BI__Stage__c!='Complete'  ){
+                            loanRec.ECC_Dealer_PM__c =newRecordMap.get(loanRec.LLC_BI__Product_Package__c).ECC_Dealer_PM__c;                            
+                            Loanlist.add(loanRec);
+                        }
+                    }
+                }
+            //}
+            
+            //In process builder Node name "Update Line of Business on LLC_BI__Loan__c"    
+           // for(LLC_BI__Product_Package__c pp1 : newRecordMap.values()){
+                if(oldRecordMap!= null && oldRecordMap.get(ppdeal.id).Bank_Division__c != ppdeal.Bank_Division__c ){
+                    for(LLC_BI__Loan__c loanr : loanListq){
+                        if(loanr .LLC_BI__Stage__c != 'Booked' &&loanr .LLC_BI__Stage__c!='Complete'){
+                            loanr.Line_of_Business1__c =newRecordMap.get(loanr.LLC_BI__Product_Package__c).Bank_Division__c;
+                            Loanlist.add(loanr);
+                        }
+                    }
+                }                
+           // }
+            //In process builder Node name  "Appeal Process "
+           // for(LLC_BI__Product_Package__c pps:newRecordMap.values()){
+                if(oldRecordMap!= null && ppdeal.Appeal__c == true && ppdeal.Appeal__c != oldRecordMap.get(ppdeal.id).Appeal__c && ppdeal.LLC_BI__Stage__c == 'Credit Underwriting' &&  ppdeal.LLC_BI__Status__c=='Open'){
+                    for(LLC_BI__Loan__c lrec: loanListq ){
+                        if(lrec.ECC_Declined_Split_Decision__c ==false && lrec.LLC_BI__Status__c=='Declined' && lrec.ECC_Mail_Systems_Letter_Send_Date__c == system.today()-1){
+                            
+                            lrec.ECC_Mail_Systems_Letter_Code__c='';
+                            lrec.ECC_Mail_Systems_Letter_Send_Date__c=NULL;
+                            lrec.LLC_BI__Stage__c='Credit Underwriting' ;
+                            lrec.LLC_BI__Status__c='Open';
+                            Loanlist.add(lrec);
+                        }
+                        
+                        if(lrec.ECC_Declined_Split_Decision__c == false && lrec.LLC_BI__Status__c=='Declined'){
+                            
+                            lrec.LLC_BI__Stage__c='Credit Underwriting' ;
+                            lrec.LLC_BI__Status__c='Open';
+                            Loanlist.add(lrec);
+                        }
+                    }
+                }
+            //} 
+            
+            //In process builder Node name  "TSO - PP Marked as Suitability"
+            for(LLC_BI__Loan__c loanrecord :loanListq ){                    
+                if(loanrecord.LLC_BI__Stage__c == 'Order Entry' ){                        
+                    loanrecord.LLC_BI__Stage__c='Qualification / Proposal';
+                    loanrecord.LLC_BI__Status__c='Open';
+                    Loanlist.add(loanrecord);
+                }
+                if(loanrecord.LLC_BI__Stage__c == '' ){                        
+                    loanrecord.LLC_BI__Stage__c='Qualification / Proposal';
+                    loanrecord.LLC_BI__Status__c='Open';
+                    Loanlist.add(loanrecord);
+                }                    
+            } 
+                
+            //In process builder Node name "Set child records private based on PP"      
+          //  for(LLC_BI__Product_Package__c ppprite:newRecordMap.values()){                
+                if(oldRecordMap!= null && oldRecordMap.get(ppdeal.id).Private__c != ppdeal.Private__c ){                    
+                    for(LLC_BI__Loan__c loanPrte :loanListq ){
+                        loanPrte.Private__c = newRecordMap.get(loanPrte.LLC_BI__Product_Package__c).Private__c;
+                        Loanlist.add(loanPrte);
+                    }
+                }
+            }
+        }  
+
+        
+        for(LLC_BI__Product_Package__c ppReview:newRecordMap.values()){            
+            if(oldRecordMap!=null && oldRecordMap.get(ppReview.id).Private__c != ppReview.Private__c){                
+                for(LLC_BI__Review__c Rew :PPReviewQu ){
+                    Rew.Private__c = newRecordMap.get(Rew.LLC_BI__Product_Package__c).Private__c;
+                    Rewlist.add(Rew);
+                }
+            }   
+        //}
+        
+       // for(LLC_BI__Product_Package__c pphistry:newRecordMap.values()){
+            
+            if(oldRecordMap!= null && oldRecordMap.get(ppReview.id).Private__c != ppReview.Private__c){                
+                for(ECC_Product_Package_History__c PPH :PPHtry ){                                        
+                    PPH.Private__c = newRecordMap.get(PPH.ECC_Product_Package__c).Private__c;
+                    Hislist.add(PPH);
+                }
+            }            
+        //}
+       // for(LLC_BI__Product_Package__c ppCre:newRecordMap.values()){            
+            if( oldRecordMap!= null && oldRecordMap.get(ppReview.id).Private__c != ppReview.Private__c ){                
+                for(ECC_Credit_Request__c PPcredit:PPCrdreq ){                                        
+                    PPcredit.Private__c = newRecordMap.get(PPcredit.ECC_Product_Package__c).Private__c;
+                    Crerelist.add(PPcredit);
+                }
+            }            
+        }
+        if(!Loanlist.isEmpty()){
+            update Loanlist;
+        }
+        if(!Rewlist.isEmpty()){
+            update Rewlist;
+        }
+        if(!Hislist.isEmpty()){
+            update Hislist;
+        }
+        if(!Crerelist.isEmpty()){
+            update Crerelist;
+        }                
+    }
+}
